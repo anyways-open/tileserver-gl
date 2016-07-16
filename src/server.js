@@ -13,6 +13,7 @@ var base64url = require('base64url'),
     express = require('express'),
     handlebars = require('handlebars'),
     mercator = new (require('sphericalmercator'))(),
+    mbtiles = require('mbtiles'),
     morgan = require('morgan');
 
 var packageJson = require('../package'),
@@ -65,6 +66,8 @@ module.exports = function(opts, callback) {
   paths.sprites = path.resolve(paths.root, paths.sprites || '');
   paths.mbtiles = path.resolve(paths.root, paths.mbtiles || '');
 
+  console.log(config);
+
   var data = clone(config.data || {});
 
   app.use(cors());
@@ -110,6 +113,31 @@ module.exports = function(opts, callback) {
     app.use('/fonts/', serve_font(options, serving.fonts));
   }
 
+  var planetTileJson = {
+    'tiles': options.domains
+  };
+
+  var planetMbtilesPath = path.join(options.paths.mbtiles, "planet.mbtiles");
+  console.log(planetMbtilesPath);
+	var planetSource = new mbtiles(planetMbtilesPath, function(err) {
+    console.log("Planet source: " +  err);
+  });
+
+    planetSource.getInfo(function(err, info) {
+      planetTileJson['name'] = 'planet';
+      planetTileJson['format'] = 'pbf';
+
+      Object.assign(planetTileJson, info);
+
+      planetTileJson['tilejson'] = '2.0.0';
+      planetTileJson['basename'] = 'planet';
+      //planetTileJson['filesize'] = fs.statSync(planetMbtilesPath)['size'];
+      delete planetTileJson['scheme'];
+
+      //Object.assign(planetTileJson, params.tilejson || {});
+      utils.fixTileJSONCenter(planetTileJson);
+    });
+
   Object.keys(data).forEach(function(id) {
     var item = data[id];
     if (!item.mbtiles || item.mbtiles.length == 0) {
@@ -117,7 +145,7 @@ module.exports = function(opts, callback) {
       return;
     }
 
-    app.use('/data/', serve_data(options, serving.data, item, id));
+    app.use('/data/', serve_data(options, serving.data, item, id, { source: planetSource, tilejson: planetTileJson }));
   });
 
   app.get('/styles.json', function(req, res, next) {

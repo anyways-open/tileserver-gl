@@ -9,33 +9,16 @@ var clone = require('clone'),
 
 var utils = require('./utils');
 
-module.exports = function(options, repo, params, id) {
+module.exports = function(options, repo, params, id, planet) {
   var app = express().disable('x-powered-by');
 
   var mbtilesFile = path.join(options.paths.mbtiles, params.mbtiles);
-  var tileJSON = {
-    'tiles': params.domains || options.domains
-  };
+  var tileJSON = planet.tilejson;
+  repo[id] = planet.tilejson;
 
-  repo[id] = tileJSON;
-
-  var source = new mbtiles(mbtilesFile, function(err) {
-    source.getInfo(function(err, info) {
-      tileJSON['name'] = id;
-      tileJSON['format'] = 'pbf';
-
-      Object.assign(tileJSON, info);
-
-      tileJSON['tilejson'] = '2.0.0';
-      tileJSON['basename'] = id;
-      tileJSON['filesize'] = fs.statSync(mbtilesFile)['size'];
-      delete tileJSON['scheme'];
-
-      Object.assign(tileJSON, params.tilejson || {});
-      utils.fixTileJSONCenter(tileJSON);
-    });
-  });
-
+  var planetSource = planet.source;
+  var source = new mbtiles(mbtilesFile, function(err) {});
+  console.log("" + id + "path:" + mbtilesFile);
   var tilePattern = '/' + id + '/:z(\\d+)/:x(\\d+)/:y(\\d+).:format([\\w]+)';
 
   app.get(tilePattern, function(req, res, next) {
@@ -52,8 +35,33 @@ module.exports = function(options, repo, params, id) {
     }
     source.getTile(z, x, y, function(err, data, headers) {
       if (err) {
+        console.log("Getting " + id + " tile " + z + "/" + x + "/" + y + "failed:" + err);
         if (/does not exist/.test(err.message)) {
-          return res.status(404).send(err.message);
+              planetSource.getTile(z, x, y, function(err, data, headers) {
+                console.log("" + id + " tile not found, getting planet tile " + z + "/" + x + "/" + y);
+                if (err) {
+                  console.log("Getting planet tile " + z + "/" + x + "/" + y + "failed:" + err);
+                  if (/does not exist/.test(err.message)) {
+                    return res.status(404).send(err.message);
+                  } else {
+                    return res.status(500).send(err.message);
+                  }
+                } else {
+                  if (tileJSON['format'] == 'pbf') {
+                    headers['Content-Type'] = 'application/x-protobuf';
+                    headers['Content-Encoding'] = 'gzip';
+                  }
+                  delete headers['ETag']; // do not trust the tile ETag -- regenerate
+                  res.set(headers);
+
+                  if (data == null) {
+                    return res.status(404).send('Not found');
+                  } else {
+                    console.log("Planet tile " + z + "/" + x + "/" + y + "found");
+                    return res.status(200).send(data);
+                  }
+                }
+              });
         } else {
           return res.status(500).send(err.message);
         }
